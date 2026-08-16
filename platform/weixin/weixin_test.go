@@ -211,6 +211,50 @@ func TestRoutePinnedStatus_UsesStatusEndpoint(t *testing.T) {
 	}
 }
 
+func TestParsePinnedTaskCommand(t *testing.T) {
+	tests := []struct {
+		body           string
+		index          int
+		reply          string
+		matched, valid bool
+	}{
+		{"/rw 3 继续分析", 3, "继续分析", true, true},
+		{"/RW\u30003\u3000/y 直接补充", 3, "/y 直接补充", true, true},
+		{"/rw", 0, "", true, false},
+		{"/rw x 内容", 0, "", true, false},
+		{"/rwpush", 0, "", false, false},
+	}
+	for _, tt := range tests {
+		index, reply, matched, valid := parsePinnedTaskCommand(tt.body)
+		if index != tt.index || reply != tt.reply || matched != tt.matched || valid != tt.valid {
+			t.Fatalf("parsePinnedTaskCommand(%q)=(%d,%q,%v,%v)", tt.body, index, reply, matched, valid)
+		}
+	}
+}
+
+func TestRoutePinnedTaskReply_UsesTaskEndpoint(t *testing.T) {
+	var got pinnedTaskRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/task" {
+			t.Fatalf("path=%q want /task", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"handled":true,"message":"收到"}`))
+	}))
+	defer server.Close()
+	p := &Platform{quoteRouterURL: server.URL + "/route", quoteRouterClient: newQuoteRouterHTTPClient()}
+	handled, message, err := p.routePinnedTaskReply(context.Background(), 3, "/y 内容", "m4", "u4")
+	if err != nil || !handled || message != "收到" {
+		t.Fatalf("handled=%v message=%q err=%v", handled, message, err)
+	}
+	if got.PinnedIndex != 3 || got.ReplyText != "/y 内容" || got.MessageID != "m4" || got.UserID != "u4" {
+		t.Fatalf("request=%+v", got)
+	}
+}
+
 func TestRoutePinnedPushToggle_UsesToggleEndpoint(t *testing.T) {
 	var got quoteStatusRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -415,6 +459,32 @@ func TestDispatchInbound_StatusCommandDoesNotReachNormalAgent(t *testing.T) {
 	})
 	if called || calls.Load() != 1 {
 		t.Fatalf("called=%v statusCalls=%d", called, calls.Load())
+	}
+}
+
+func TestDispatchInbound_PinnedTaskCommandDoesNotReachNormalAgent(t *testing.T) {
+	var got pinnedTaskRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/task" {
+			t.Fatalf("path=%q want /task", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"handled":true,"message":""}`))
+	}))
+	defer server.Close()
+	p := &Platform{
+		quoteRouterURL: server.URL + "/route", quoteRouterClient: newQuoteRouterHTTPClient(), dedup: make(map[string]time.Time),
+	}
+	called := false
+	p.dispatchInbound(context.Background(), &weixinMessage{
+		MessageID: 48, FromUserID: "user-1",
+		ItemList: []messageItem{{Type: messageItemVoice, VoiceItem: &voiceItem{Text: "/rw 3 /y 继续"}}},
+	}, func(core.Platform, *core.Message) { called = true })
+	if called || got.PinnedIndex != 3 || got.ReplyText != "/y 继续" {
+		t.Fatalf("called=%v request=%+v", called, got)
 	}
 }
 

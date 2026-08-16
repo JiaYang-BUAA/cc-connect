@@ -34,6 +34,13 @@ type quoteStatusRequest struct {
 	UserID    string `json:"user_id"`
 }
 
+type pinnedTaskRequest struct {
+	PinnedIndex int    `json:"pinned_index"`
+	ReplyText   string `json:"reply_text"`
+	MessageID   string `json:"message_id"`
+	UserID      string `json:"user_id"`
+}
+
 func validateQuoteRouterURL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -91,6 +98,30 @@ func (p *Platform) routePinnedStatus(
 	u.Path = "/status"
 	u.RawQuery = ""
 	payload, err := json.Marshal(quoteStatusRequest{MessageID: messageID, UserID: userID})
+	if err != nil {
+		return false, "", err
+	}
+	return p.postQuoteRouter(ctx, u.String(), payload)
+}
+
+func (p *Platform) routePinnedTaskReply(
+	ctx context.Context, pinnedIndex int, replyText, messageID, userID string,
+) (bool, string, error) {
+	if p.quoteRouterURL == "" || p.quoteRouterClient == nil {
+		return false, "Codex 置顶任务路由尚未启用。", nil
+	}
+	u, err := url.Parse(p.quoteRouterURL)
+	if err != nil {
+		return false, "", err
+	}
+	u.Path = "/task"
+	u.RawQuery = ""
+	payload, err := json.Marshal(pinnedTaskRequest{
+		PinnedIndex: pinnedIndex,
+		ReplyText:   replyText,
+		MessageID:   messageID,
+		UserID:      userID,
+	})
 	if err != nil {
 		return false, "", err
 	}

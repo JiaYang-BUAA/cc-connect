@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -557,7 +558,8 @@ func (p *Platform) dispatchInbound(ctx context.Context, m *weixinMessage, h core
 	}
 
 	body := bodyFromItemList(m.ItemList)
-	if strings.TrimSpace(body) == "/rw" {
+	trimmedBody := strings.TrimSpace(body)
+	if strings.EqualFold(trimmedBody, "/rw") {
 		handled, response, err := p.routePinnedStatus(ctx, msgID, from)
 		if err != nil {
 			slog.Warn("weixin: Codex pinned status route failed", "error", err)
@@ -575,7 +577,24 @@ func (p *Platform) dispatchInbound(ctx context.Context, m *weixinMessage, h core
 		// by cc-connect's own slash-command or agent routing behavior.
 		return
 	}
-	if strings.TrimSpace(body) == "/rwpush" {
+	if pinnedIndex, reply, matched, valid := parsePinnedTaskCommand(trimmedBody); matched {
+		response := "用法：/rw 编号 内容"
+		if valid {
+			var err error
+			_, response, err = p.routePinnedTaskReply(ctx, pinnedIndex, reply, msgID, from)
+			if err != nil {
+				slog.Warn("weixin: Codex pinned task route failed", "error", err)
+				response = "本机 Codex 置顶任务路由暂时不可用，请稍后重试。"
+			}
+		}
+		if response != "" {
+			if sendErr := p.sendChunks(ctx, rc, response); sendErr != nil {
+				slog.Warn("weixin: Codex pinned task response send failed", "error", sendErr)
+			}
+		}
+		return
+	}
+	if strings.EqualFold(trimmedBody, "/rwpush") {
 		handled, response, err := p.routePinnedPushToggle(ctx, msgID, from)
 		if err != nil {
 			slog.Warn("weixin: Codex pinned push toggle route failed", "error", err)
@@ -613,6 +632,26 @@ func (p *Platform) dispatchInbound(ctx context.Context, m *weixinMessage, h core
 		Audio:      audio,
 		ReplyCtx:   rc,
 	})
+}
+
+func parsePinnedTaskCommand(body string) (int, string, bool, bool) {
+	fields := strings.Fields(body)
+	if len(fields) == 0 || !strings.EqualFold(fields[0], "/rw") {
+		return 0, "", false, false
+	}
+	if len(fields) < 3 {
+		return 0, "", true, false
+	}
+	index, err := strconv.Atoi(fields[1])
+	if err != nil || index <= 0 {
+		return 0, "", true, false
+	}
+	start := strings.Index(body, fields[1]) + len(fields[1])
+	reply := strings.TrimSpace(body[start:])
+	if reply == "" {
+		return 0, "", true, false
+	}
+	return index, reply, true, true
 }
 
 func mediaOnlyItems(items []messageItem) bool {
