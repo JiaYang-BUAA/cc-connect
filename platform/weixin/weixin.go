@@ -578,7 +578,7 @@ func (p *Platform) dispatchInbound(ctx context.Context, m *weixinMessage, h core
 		return
 	}
 	if pinnedIndex, reply, matched, valid := parsePinnedTaskCommand(trimmedBody); matched {
-		response := "用法：/rw 编号 内容"
+		response := "用法：/rw编号 内容"
 		if valid {
 			var err error
 			_, response, err = p.routePinnedTaskReply(ctx, pinnedIndex, reply, msgID, from)
@@ -636,17 +636,24 @@ func (p *Platform) dispatchInbound(ctx context.Context, m *weixinMessage, h core
 
 func parsePinnedTaskCommand(body string) (int, string, bool, bool) {
 	fields := strings.Fields(body)
-	if len(fields) == 0 || !strings.EqualFold(fields[0], "/rw") {
+	if len(fields) == 0 {
 		return 0, "", false, false
 	}
-	if len(fields) < 3 {
+	command := fields[0]
+	if strings.EqualFold(command, "/rw") {
 		return 0, "", true, false
 	}
-	index, err := strconv.Atoi(fields[1])
+	if len(command) < 4 || !strings.EqualFold(command[:3], "/rw") || strings.EqualFold(command, "/rwpush") {
+		return 0, "", false, false
+	}
+	if len(fields) < 2 {
+		return 0, "", true, false
+	}
+	index, err := strconv.Atoi(command[3:])
 	if err != nil || index <= 0 {
 		return 0, "", true, false
 	}
-	start := strings.Index(body, fields[1]) + len(fields[1])
+	start := strings.Index(body, command) + len(command)
 	reply := strings.TrimSpace(body[start:])
 	if reply == "" {
 		return 0, "", true, false

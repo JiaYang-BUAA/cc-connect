@@ -218,10 +218,11 @@ func TestParsePinnedTaskCommand(t *testing.T) {
 		reply          string
 		matched, valid bool
 	}{
-		{"/rw 3 继续分析", 3, "继续分析", true, true},
-		{"/RW\u30003\u3000/y 直接补充", 3, "/y 直接补充", true, true},
+		{"/rw3 继续分析", 3, "继续分析", true, true},
+		{"/RW3\u3000/y 直接补充", 3, "/y 直接补充", true, true},
 		{"/rw", 0, "", true, false},
-		{"/rw x 内容", 0, "", true, false},
+		{"/rwx 内容", 0, "", true, false},
+		{"/rw 3 内容", 0, "", true, false},
 		{"/rwpush", 0, "", false, false},
 	}
 	for _, tt := range tests {
@@ -481,7 +482,7 @@ func TestDispatchInbound_PinnedTaskCommandDoesNotReachNormalAgent(t *testing.T) 
 	called := false
 	p.dispatchInbound(context.Background(), &weixinMessage{
 		MessageID: 48, FromUserID: "user-1",
-		ItemList: []messageItem{{Type: messageItemVoice, VoiceItem: &voiceItem{Text: "/rw 3 /y 继续"}}},
+		ItemList: []messageItem{{Type: messageItemVoice, VoiceItem: &voiceItem{Text: "/rw3 /y 继续"}}},
 	}, func(core.Platform, *core.Message) { called = true })
 	if called || got.PinnedIndex != 3 || got.ReplyText != "/y 继续" {
 		t.Fatalf("called=%v request=%+v", called, got)
