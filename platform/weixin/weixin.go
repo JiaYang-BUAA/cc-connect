@@ -559,6 +559,13 @@ func (p *Platform) dispatchInbound(ctx context.Context, m *weixinMessage, h core
 
 	body := bodyFromItemList(m.ItemList)
 	trimmedBody := strings.TrimSpace(body)
+	if strings.EqualFold(trimmedBody, "/hp") {
+		response := "使用指南\n/rw 查看置顶任务状态\n/rw编号 内容 回复指定任务\n引用答复继续对话，任务运行中默认排队\n/y 内容 直接提交\n/rwpush 开关答复推送"
+		if sendErr := p.sendChunks(ctx, rc, response); sendErr != nil {
+			slog.Warn("weixin: usage help response send failed", "error", sendErr)
+		}
+		return
+	}
 	if strings.EqualFold(trimmedBody, "/rw") {
 		handled, response, err := p.routePinnedStatus(ctx, msgID, from)
 		if err != nil {
