@@ -1,5 +1,7 @@
 package weixin
 
+import "encoding/json"
+
 // JSON shapes mirror the ilink bot HTTP API (Weixin / personal bridge).
 
 const (
@@ -43,7 +45,8 @@ type getUpdatesResp struct {
 }
 
 type textItem struct {
-	Text string `json:"text,omitempty"`
+	Text   string      `json:"text,omitempty"`
+	RefMsg *refMessage `json:"ref_msg,omitempty"`
 }
 
 // cdnMedia mirrors CDNMedia in the ilink JSON API.
@@ -78,13 +81,27 @@ type refMessage struct {
 }
 
 type messageItem struct {
-	Type      int         `json:"type,omitempty"`
-	TextItem  *textItem   `json:"text_item,omitempty"`
-	VoiceItem *voiceItem  `json:"voice_item,omitempty"`
-	ImageItem *imageItem  `json:"image_item,omitempty"`
-	FileItem  *fileItem   `json:"file_item,omitempty"`
-	VideoItem *videoItem  `json:"video_item,omitempty"`
-	RefMsg    *refMessage `json:"ref_msg,omitempty"`
+	Type         int             `json:"type,omitempty"`
+	CreateTimeMs int64           `json:"create_time_ms,omitempty"`
+	MsgID        string          `json:"msg_id,omitempty"`
+	TextItem     *textItem       `json:"text_item,omitempty"`
+	VoiceItem    *voiceItem      `json:"voice_item,omitempty"`
+	ImageItem    *imageItem      `json:"image_item,omitempty"`
+	FileItem     *fileItem       `json:"file_item,omitempty"`
+	VideoItem    *videoItem      `json:"video_item,omitempty"`
+	RefMsg       *refMessage     `json:"ref_msg,omitempty"`
+	Raw          json.RawMessage `json:"-"`
+}
+
+func (item *messageItem) UnmarshalJSON(data []byte) error {
+	type messageItemAlias messageItem
+	var decoded messageItemAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*item = messageItem(decoded)
+	item.Raw = append(item.Raw[:0], data...)
+	return nil
 }
 
 type voiceItem struct {
@@ -138,10 +155,10 @@ type sendMessageResp struct {
 }
 
 type sendTypingReq struct {
-	IlinkUserID   string   `json:"ilink_user_id"`
-	TypingTicket  string   `json:"typing_ticket"`
-	Status        int      `json:"status"`
-	BaseInfo      baseInfo `json:"base_info"`
+	IlinkUserID  string   `json:"ilink_user_id"`
+	TypingTicket string   `json:"typing_ticket"`
+	Status       int      `json:"status"`
+	BaseInfo     baseInfo `json:"base_info"`
 }
 
 type getConfigReq struct {

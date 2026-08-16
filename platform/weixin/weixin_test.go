@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -49,6 +50,307 @@ func TestBodyFromItemList_Quote(t *testing.T) {
 	want := "[引用: t | inner]\nreply"
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestQuotedTextReply_CodexNotification(t *testing.T) {
+	notification := "【科研】\n这是最终答复……\n\n↩ 引用此条信息进行回复"
+	items := []messageItem{{
+		Type:     messageItemText,
+		TextItem: &textItem{Text: "继续分析第二种方案"},
+		RefMsg: &refMessage{MessageItem: &messageItem{
+			Type:     messageItemText,
+			TextItem: &textItem{Text: notification},
+		}},
+	}}
+	quote, reply, ok := quotedTextReply(items)
+	if !ok || quote != notification || reply != "继续分析第二种方案" {
+		t.Fatalf("quote=%q reply=%q ok=%v", quote, reply, ok)
+	}
+	if !isCodexNotificationQuote(quote) {
+		t.Fatal("expected Codex notification marker")
+	}
+	if isCodexNotificationQuote("【科研】\n普通消息") {
+		t.Fatal("message without footer must not be routed")
+	}
+	if !isCodexNotificationQuote("Codex: " + notification) {
+		t.Fatal("sender-prefixed notification must be routed")
+	}
+	textRefItems := []messageItem{{
+		Type: messageItemText,
+		TextItem: &textItem{Text: "继续分析第二种方案", RefMsg: &refMessage{MessageItem: &messageItem{
+			Type:     messageItemText,
+			TextItem: &textItem{Text: notification},
+		}}},
+	}}
+	quote, reply, ok = quotedTextReply(textRefItems)
+	if !ok || quote != notification || reply != "继续分析第二种方案" {
+		t.Fatalf("text item quote=%q reply=%q ok=%v", quote, reply, ok)
+	}
+	var nestedItems []messageItem
+	raw := `[{"type":1,"text_item":{"text":"继续分析第二种方案","unknown_reference":{"payload":{"content":` +
+		strconv.Quote(notification) + `}}}}]`
+	if err := json.Unmarshal([]byte(raw), &nestedItems); err != nil {
+		t.Fatal(err)
+	}
+	quote, reply, ok = quotedTextReply(nestedItems)
+	if !ok || quote != notification || reply != "继续分析第二种方案" {
+		t.Fatalf("raw nested quote=%q reply=%q ok=%v", quote, reply, ok)
+	}
+	preview := "Codex: 【科研】 这是最终答复……"
+	raw = `[{"type":1,"text_item":{"text":"继续分析第二种方案","unknown_reference":{"preview":` +
+		strconv.Quote(preview) + `}}}]`
+	if err := json.Unmarshal([]byte(raw), &nestedItems); err != nil {
+		t.Fatal(err)
+	}
+	quote, reply, ok = quotedTextReply(nestedItems)
+	if !ok || quote != preview || reply != "继续分析第二种方案" || !isCodexQuoteCandidate(quote) {
+		t.Fatalf("preview quote=%q reply=%q ok=%v", quote, reply, ok)
+	}
+}
+
+func TestValidateQuoteRouterURL_LoopbackOnly(t *testing.T) {
+	got, err := validateQuoteRouterURL("http://127.0.0.1:18765")
+	if err != nil || got != "http://127.0.0.1:18765/route" {
+		t.Fatalf("got=%q err=%v", got, err)
+	}
+	if _, err := validateQuoteRouterURL("https://example.com/route"); err == nil {
+		t.Fatal("non-loopback router URL must be rejected")
+	}
+}
+
+func TestRouteQuotedReply_PostsStructuredJSON(t *testing.T) {
+	var got quoteRouteRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Codex-Quote-Token") != "secret" {
+			t.Fatal("missing router token")
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"handled":true,"message":"收到"}`))
+	}))
+	defer server.Close()
+
+	p := &Platform{
+		quoteRouterURL:    server.URL + "/route",
+		quoteRouterToken:  "secret",
+		quoteRouterClient: newQuoteRouterHTTPClient(),
+	}
+	handled, message, err := p.routeQuotedReply(
+		context.Background(), "【科研】\n答案\n\n"+codexQuoteFooter, "继续", "m1", "u1", "out-1", 123456,
+	)
+	if err != nil || !handled || message != "收到" {
+		t.Fatalf("handled=%v message=%q err=%v", handled, message, err)
+	}
+	if got.ReplyText != "继续" || got.MessageID != "m1" || got.UserID != "u1" || got.ReferencedMessageID != "out-1" || got.ReferencedCreateTimeMs != 123456 {
+		t.Fatalf("request=%+v", got)
+	}
+}
+
+func TestQuotedMessageReference_IDOnlyIlinkShape(t *testing.T) {
+	raw := `[{"type":1,"ref_msg":{"message_item":{"type":0,"create_time_ms":1786855680000,"msg_id":"7494615923961113736"}},"text_item":{"text":"继续"}}]`
+	var items []messageItem
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		t.Fatal(err)
+	}
+	messageID, createTimeMs, ok := quotedMessageReference(items)
+	if !ok || messageID != "7494615923961113736" || createTimeMs != 1786855680000 {
+		t.Fatalf("messageID=%q createTimeMs=%d ok=%v", messageID, createTimeMs, ok)
+	}
+}
+
+func TestRoutePinnedStatus_UsesStatusEndpoint(t *testing.T) {
+	var got quoteStatusRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/status" {
+			t.Fatalf("path=%q want /status", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"handled":true,"message":"置顶任务（1）"}`))
+	}))
+	defer server.Close()
+	p := &Platform{
+		quoteRouterURL:    server.URL + "/route",
+		quoteRouterClient: newQuoteRouterHTTPClient(),
+	}
+	handled, message, err := p.routePinnedStatus(context.Background(), "m2", "u2")
+	if err != nil || !handled || message != "置顶任务（1）" {
+		t.Fatalf("handled=%v message=%q err=%v", handled, message, err)
+	}
+	if got.MessageID != "m2" || got.UserID != "u2" {
+		t.Fatalf("request=%+v", got)
+	}
+}
+
+func TestRoutePinnedPushToggle_UsesToggleEndpoint(t *testing.T) {
+	var got quoteStatusRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/toggle" {
+			t.Fatalf("path=%q want /toggle", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"handled":true,"message":"置顶任务回复推送已关闭"}`))
+	}))
+	defer server.Close()
+	p := &Platform{
+		quoteRouterURL:    server.URL + "/route",
+		quoteRouterClient: newQuoteRouterHTTPClient(),
+	}
+	handled, message, err := p.routePinnedPushToggle(context.Background(), "m3", "u3")
+	if err != nil || !handled || message != "置顶任务回复推送已关闭" {
+		t.Fatalf("handled=%v message=%q err=%v", handled, message, err)
+	}
+	if got.MessageID != "m3" || got.UserID != "u3" {
+		t.Fatalf("request=%+v", got)
+	}
+}
+
+func TestDispatchInbound_CodexQuoteDoesNotReachNormalAgent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"handled":true,"message":""}`))
+	}))
+	defer server.Close()
+	p := &Platform{
+		quoteRouterURL:    server.URL + "/route",
+		quoteRouterClient: newQuoteRouterHTTPClient(),
+		dedup:             make(map[string]time.Time),
+	}
+	notification := "【日常】\n答案\n\n" + codexQuoteFooter
+	called := false
+	p.dispatchInbound(context.Background(), &weixinMessage{
+		MessageID:  42,
+		FromUserID: "user-1",
+		ItemList: []messageItem{{
+			Type:     messageItemText,
+			TextItem: &textItem{Text: "继续"},
+			RefMsg: &refMessage{MessageItem: &messageItem{
+				Type:     messageItemText,
+				TextItem: &textItem{Text: notification},
+			}},
+		}},
+	}, func(core.Platform, *core.Message) {
+		called = true
+	})
+	if called {
+		t.Fatal("quoted Codex notification must not fall through to cc-connect's normal agent")
+	}
+}
+
+func TestDispatchInbound_IDOnlyQuoteRoutesToCodex(t *testing.T) {
+	var got quoteRouteRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"handled":true,"message":""}`))
+	}))
+	defer server.Close()
+	p := &Platform{
+		quoteRouterURL:    server.URL + "/route",
+		quoteRouterClient: newQuoteRouterHTTPClient(),
+		dedup:             make(map[string]time.Time),
+	}
+	called := false
+	p.dispatchInbound(context.Background(), &weixinMessage{
+		MessageID:  45,
+		FromUserID: "user-1",
+		ItemList: []messageItem{{
+			Type:     messageItemText,
+			TextItem: &textItem{Text: "继续"},
+			RefMsg: &refMessage{MessageItem: &messageItem{
+				CreateTimeMs: 1786855680000,
+				MsgID:        "7494615923961113736",
+			}},
+		}},
+	}, func(core.Platform, *core.Message) {
+		called = true
+	})
+	if called {
+		t.Fatal("matched ID-only quote must not reach cc-connect's normal agent")
+	}
+	if got.ReferencedMessageID != "7494615923961113736" || got.ReferencedCreateTimeMs != 1786855680000 || got.ReplyText != "继续" {
+		t.Fatalf("request=%+v", got)
+	}
+}
+
+func TestPlainTextReply(t *testing.T) {
+	items := []messageItem{{Type: messageItemText, TextItem: &textItem{Text: " 继续 "}}}
+	if got := plainTextReply(items); got != "继续" {
+		t.Fatalf("plainTextReply()=%q", got)
+	}
+}
+
+func TestDispatchInbound_StatusCommandDoesNotReachNormalAgent(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Path != "/status" {
+			t.Fatalf("path=%q want /status", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"handled":true,"message":""}`))
+	}))
+	defer server.Close()
+	p := &Platform{
+		quoteRouterURL:    server.URL + "/route",
+		quoteRouterClient: newQuoteRouterHTTPClient(),
+		dedup:             make(map[string]time.Time),
+	}
+	called := false
+	p.dispatchInbound(context.Background(), &weixinMessage{
+		MessageID:  43,
+		FromUserID: "user-1",
+		ItemList: []messageItem{{
+			Type:     messageItemText,
+			TextItem: &textItem{Text: "/rw"},
+		}},
+	}, func(core.Platform, *core.Message) {
+		called = true
+	})
+	if called || calls.Load() != 1 {
+		t.Fatalf("called=%v statusCalls=%d", called, calls.Load())
+	}
+}
+
+func TestDispatchInbound_PushToggleDoesNotReachNormalAgent(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Path != "/toggle" {
+			t.Fatalf("path=%q want /toggle", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"handled":true,"message":""}`))
+	}))
+	defer server.Close()
+	p := &Platform{
+		quoteRouterURL:    server.URL + "/route",
+		quoteRouterClient: newQuoteRouterHTTPClient(),
+		dedup:             make(map[string]time.Time),
+	}
+	called := false
+	p.dispatchInbound(context.Background(), &weixinMessage{
+		MessageID:  44,
+		FromUserID: "user-1",
+		ItemList: []messageItem{{
+			Type:     messageItemText,
+			TextItem: &textItem{Text: "/rwpush"},
+		}},
+	}, func(core.Platform, *core.Message) {
+		called = true
+	})
+	if called || calls.Load() != 1 {
+		t.Fatalf("called=%v toggleCalls=%d", called, calls.Load())
 	}
 }
 
@@ -352,6 +654,71 @@ func TestPollLoop_DoesNotNotifyReadyForPollWhileGetUpdatesFails(t *testing.T) {
 	}
 	if got := srv.callCount.Load(); got < 1 {
 		t.Fatalf("getUpdates calls = %d, want >= 1 (pollLoop should be retrying)", got)
+	}
+}
+
+func TestPollLoop_ResetsRejectedCursorBeforeReady(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req getUpdatesReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		call := calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if call == 1 {
+			if req.GetUpdatesBuf != "stale" {
+				t.Fatalf("first cursor=%q want stale", req.GetUpdatesBuf)
+			}
+			_, _ = w.Write([]byte(`{"ret":-1}`))
+			return
+		}
+		if call == 2 && req.GetUpdatesBuf != "" {
+			t.Fatalf("cursor after ret=-1=%q want empty", req.GetUpdatesBuf)
+		}
+		_, _ = w.Write([]byte(`{"ret":0,"msgs":[],"get_updates_buf":"fresh"}`))
+	}))
+	defer server.Close()
+
+	syncPath := filepath.Join(t.TempDir(), "get_updates.buf")
+	p := &Platform{
+		token:         "tok",
+		baseURL:       server.URL,
+		longPollMS:    100,
+		accountLabel:  "default",
+		httpClient:    &http.Client{},
+		dedup:         make(map[string]time.Time),
+		typingTickets: make(map[string]typingTicketEntry),
+		syncBuf:       "stale",
+		syncBufPath:   syncPath,
+	}
+	p.api = newAPIClient(server.URL, "tok", "", p.httpClient)
+	handler := newTestLifecycleHandler()
+	p.SetLifecycleHandler(handler)
+
+	if err := p.Start(func(core.Platform, *core.Message) {}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Stop() })
+
+	select {
+	case <-handler.readyCh:
+	case <-time.After(4 * time.Second):
+		t.Fatalf("ready not observed after cursor reset; calls=%d", calls.Load())
+	}
+	if calls.Load() < 2 {
+		t.Fatalf("getUpdates calls=%d want >=2", calls.Load())
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		raw, err := os.ReadFile(syncPath)
+		if err == nil && string(raw) == "fresh" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("persisted cursor=%q err=%v want fresh", raw, err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

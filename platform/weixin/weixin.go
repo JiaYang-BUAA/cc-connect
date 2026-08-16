@@ -47,18 +47,21 @@ type replyContext struct {
 // Platform implements core.Platform for Weixin personal chat via the ilink bot HTTP API
 // (same backend as the OpenClaw openclaw-weixin plugin: long-poll getUpdates + sendMessage).
 type Platform struct {
-	token        string
-	baseURL      string
-	cdnBaseURL   string
-	allowFrom    string
-	routeTag     string
-	stateDir     string
-	longPollMS   int
-	accountLabel string
+	token            string
+	baseURL          string
+	cdnBaseURL       string
+	allowFrom        string
+	routeTag         string
+	stateDir         string
+	longPollMS       int
+	accountLabel     string
+	quoteRouterURL   string
+	quoteRouterToken string
 
-	httpClient    *http.Client
-	cdnHttpClient *http.Client // 专用于 CDN 上传/下载，不走代理
-	api           *apiClient
+	httpClient        *http.Client
+	cdnHttpClient     *http.Client // 专用于 CDN 上传/下载，不走代理
+	quoteRouterClient *http.Client
+	api               *apiClient
 
 	mu       sync.RWMutex
 	handler  core.MessageHandler
@@ -113,7 +116,8 @@ func sanitizePathSegment(s string) string {
 
 // New constructs a Weixin platform. Required options: token.
 // Optional: base_url, cdn_base_url (default https://novac2c.cdn.weixin.qq.com/c2c), allow_from, route_tag, account_id, long_poll_timeout_ms,
-// state_dir (override persistence dir), proxy, cc_data_dir + cc_project (injected by main).
+// state_dir (override persistence dir), proxy, codex_quote_router_url,
+// codex_quote_router_token, cc_data_dir + cc_project (injected by main).
 func New(opts map[string]any) (core.Platform, error) {
 	token, _ := opts["token"].(string)
 	if strings.TrimSpace(token) == "" {
@@ -134,6 +138,12 @@ func New(opts map[string]any) (core.Platform, error) {
 		accountLabel = "default"
 	}
 	lp := pickInt(opts["long_poll_timeout_ms"])
+	quoteRouterURL, _ := opts["codex_quote_router_url"].(string)
+	quoteRouterURL, err := validateQuoteRouterURL(quoteRouterURL)
+	if err != nil {
+		return nil, err
+	}
+	quoteRouterToken, _ := opts["codex_quote_router_token"].(string)
 
 	dataDir, _ := opts["cc_data_dir"].(string)
 	project, _ := opts["cc_project"].(string)
@@ -168,19 +178,22 @@ func New(opts map[string]any) (core.Platform, error) {
 	}
 
 	p := &Platform{
-		token:         token,
-		baseURL:       baseURL,
-		cdnBaseURL:    cdnBaseURL,
-		allowFrom:     allowFrom,
-		routeTag:      routeTag,
-		stateDir:      stateDir,
-		longPollMS:    lp,
-		accountLabel:  accountLabel,
-		httpClient:    httpClient,
-		cdnHttpClient: cdnHttpClient,
-		tokens:        make(map[string]string),
-		dedup:         make(map[string]time.Time),
-		typingTickets: make(map[string]typingTicketEntry),
+		token:             token,
+		baseURL:           baseURL,
+		cdnBaseURL:        cdnBaseURL,
+		allowFrom:         allowFrom,
+		routeTag:          routeTag,
+		stateDir:          stateDir,
+		longPollMS:        lp,
+		accountLabel:      accountLabel,
+		quoteRouterURL:    quoteRouterURL,
+		quoteRouterToken:  strings.TrimSpace(quoteRouterToken),
+		httpClient:        httpClient,
+		cdnHttpClient:     cdnHttpClient,
+		quoteRouterClient: newQuoteRouterHTTPClient(),
+		tokens:            make(map[string]string),
+		dedup:             make(map[string]time.Time),
+		typingTickets:     make(map[string]typingTicketEntry),
 	}
 	p.api = newAPIClient(baseURL, token, routeTag, httpClient)
 
@@ -383,8 +396,26 @@ func (p *Platform) pollLoop(ctx context.Context) {
 			p.pauseSession(time.Hour)
 			continue
 		}
-		if resp.Ret != 0 && resp.Errmsg != "" {
+		if resp.Ret != 0 {
 			slog.Warn("weixin: getUpdates ret", "ret", resp.Ret, "errcode", resp.Errcode, "errmsg", resp.Errmsg)
+			if strings.TrimSpace(buf) != "" {
+				p.syncBufMu.Lock()
+				p.persistSyncBuf("")
+				p.syncBufMu.Unlock()
+				slog.Warn("weixin: reset rejected getUpdates cursor", "ret", resp.Ret)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			if backoff < maxBackoff {
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+			}
+			continue
 		}
 
 		// First successful getUpdates round-trip: ilink has accepted our token
@@ -478,19 +509,84 @@ func (p *Platform) dispatchInbound(ctx context.Context, m *weixinMessage, h core
 		p.refreshTypingTicket(ctx, from, tok)
 	}
 
+	rc := &replyContext{peerUserID: from, contextToken: strings.TrimSpace(m.ContextToken)}
+	msgID := fmt.Sprintf("%d", m.MessageID)
+	if m.MessageID == 0 {
+		msgID = randomHex(8)
+	}
+	plainReply := plainTextReply(m.ItemList)
+	quoteText, replyText, textQuotedReply := quotedTextReply(m.ItemList)
+	if replyText == "" {
+		replyText = plainReply
+	}
+	referencedMessageID, referencedCreateTimeMs, referencedReply := quotedMessageReference(m.ItemList)
+	quotedReply := textQuotedReply || (referencedReply && replyText != "")
+	if quotedReply {
+		slog.Info("weixin: detected quoted text reply", "msg_id", msgID, "codex_notification", isCodexNotificationQuote(quoteText), "title_candidate", hasCodexChatTitle(quoteText), "referenced_msg_id", referencedMessageID, "referenced_create_time_ms", referencedCreateTimeMs)
+	}
+	if quotedReply && (isCodexQuoteCandidate(quoteText) || referencedReply) {
+		handled, response, err := p.routeQuotedReply(ctx, quoteText, replyText, msgID, from, referencedMessageID, referencedCreateTimeMs)
+		if err != nil {
+			slog.Warn("weixin: Codex quote router failed", "error", err)
+			response = "本机 Codex 引用回复路由暂时不可用，请稍后重试。"
+		}
+		if response != "" && (handled || isCodexQuoteCandidate(quoteText) || err != nil) {
+			if sendErr := p.sendChunks(ctx, rc, response); sendErr != nil {
+				slog.Warn("weixin: Codex quote router response send failed", "error", sendErr)
+			}
+		}
+		if handled {
+			slog.Info("weixin: routed quoted reply to Codex Desktop", "msg_id", msgID)
+			return
+		}
+		if isCodexQuoteCandidate(quoteText) || err != nil {
+			return
+		}
+	}
+
 	body := bodyFromItemList(m.ItemList)
+	if strings.TrimSpace(body) == "/rw" {
+		handled, response, err := p.routePinnedStatus(ctx, msgID, from)
+		if err != nil {
+			slog.Warn("weixin: Codex pinned status route failed", "error", err)
+			response = "本机 Codex 任务状态路由暂时不可用，请稍后重试。"
+		}
+		if response != "" {
+			if sendErr := p.sendChunks(ctx, rc, response); sendErr != nil {
+				slog.Warn("weixin: Codex pinned status response send failed", "error", sendErr)
+			}
+		}
+		if handled {
+			slog.Info("weixin: returned pinned Codex task status", "msg_id", msgID)
+		}
+		// /rw belongs to the local Codex task router and must not be affected
+		// by cc-connect's own slash-command or agent routing behavior.
+		return
+	}
+	if strings.TrimSpace(body) == "/rwpush" {
+		handled, response, err := p.routePinnedPushToggle(ctx, msgID, from)
+		if err != nil {
+			slog.Warn("weixin: Codex pinned push toggle route failed", "error", err)
+			response = "本机 Codex 置顶任务回复推送路由暂时不可用，请稍后重试。"
+		}
+		if response != "" {
+			if sendErr := p.sendChunks(ctx, rc, response); sendErr != nil {
+				slog.Warn("weixin: Codex pinned push toggle response send failed", "error", sendErr)
+			}
+		}
+		if handled {
+			slog.Info("weixin: toggled pinned Codex reply push", "msg_id", msgID)
+		}
+		// /rwpush is handled locally and must never reach cc-connect's own
+		// slash-command or agent routing behavior.
+		return
+	}
 	images, files, audio := p.collectInboundMedia(ctx, m.ItemList)
 	if strings.TrimSpace(body) == "" && len(images) == 0 && len(files) == 0 && audio == nil && mediaOnlyItems(m.ItemList) {
 		body = "[收到媒体消息：CDN 下载或解密失败，或未配置 cdn_base_url；请改用文字说明。]"
 	}
 	if strings.TrimSpace(body) == "" && len(images) == 0 && len(files) == 0 && audio == nil {
 		return
-	}
-
-	rc := &replyContext{peerUserID: from, contextToken: strings.TrimSpace(m.ContextToken)}
-	msgID := fmt.Sprintf("%d", m.MessageID)
-	if m.MessageID == 0 {
-		msgID = randomHex(8)
 	}
 
 	h(p, &core.Message{
