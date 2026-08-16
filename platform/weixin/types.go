@@ -105,9 +105,10 @@ func (item *messageItem) UnmarshalJSON(data []byte) error {
 }
 
 type voiceItem struct {
-	Media      *cdnMedia `json:"media,omitempty"`
-	Text       string    `json:"text,omitempty"`
-	EncodeType int       `json:"encode_type,omitempty"`
+	Media      *cdnMedia   `json:"media,omitempty"`
+	Text       string      `json:"text,omitempty"`
+	EncodeType int         `json:"encode_type,omitempty"`
+	RefMsg     *refMessage `json:"ref_msg,omitempty"`
 }
 
 type getUploadURLRequest struct {

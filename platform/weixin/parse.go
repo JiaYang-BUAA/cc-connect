@@ -71,28 +71,63 @@ func quotedTextReply(items []messageItem) (quoteText, replyText string, ok bool)
 			continue
 		}
 		replyText = strings.TrimSpace(item.TextItem.Text)
-		ref := item.RefMsg
-		if ref == nil && item.TextItem != nil {
-			ref = item.TextItem.RefMsg
-		}
-		if ref != nil {
-			if ref.MessageItem != nil {
-				quoteText = strings.TrimSpace(bodyFromItemList([]messageItem{*ref.MessageItem}))
-			}
-			if quoteText == "" {
-				quoteText = strings.TrimSpace(ref.Title)
-			}
-		}
-		if !isCodexQuoteCandidate(quoteText) {
-			if rawQuote := codexNotificationFromRaw(item.Raw); rawQuote != "" {
-				quoteText = rawQuote
-			}
-		}
+		quoteText = quotedItemText(&item)
 		if quoteText != "" && replyText != "" {
 			return quoteText, replyText, true
 		}
 	}
 	return "", "", false
+}
+
+// quotedVoiceReply extracts Weixin's built-in recognition text from a voice
+// message that quotes a previous notification. The raw SILK audio remains on
+// the messaging path and is never forwarded to the local Codex text router.
+func quotedVoiceReply(items []messageItem) (quoteText, replyText string, ok bool) {
+	for _, item := range items {
+		if item.Type != messageItemVoice || item.VoiceItem == nil {
+			continue
+		}
+		quoteText = quotedItemText(&item)
+		if quoteText == "" && itemReference(&item) == nil {
+			continue
+		}
+		return quoteText, strings.TrimSpace(item.VoiceItem.Text), true
+	}
+	return "", "", false
+}
+
+func itemReference(item *messageItem) *refMessage {
+	if item == nil {
+		return nil
+	}
+	if item.RefMsg != nil {
+		return item.RefMsg
+	}
+	if item.TextItem != nil && item.TextItem.RefMsg != nil {
+		return item.TextItem.RefMsg
+	}
+	if item.VoiceItem != nil && item.VoiceItem.RefMsg != nil {
+		return item.VoiceItem.RefMsg
+	}
+	return nil
+}
+
+func quotedItemText(item *messageItem) string {
+	var quoteText string
+	if ref := itemReference(item); ref != nil {
+		if ref.MessageItem != nil {
+			quoteText = strings.TrimSpace(bodyFromItemList([]messageItem{*ref.MessageItem}))
+		}
+		if quoteText == "" {
+			quoteText = strings.TrimSpace(ref.Title)
+		}
+	}
+	if !isCodexQuoteCandidate(quoteText) {
+		if rawQuote := codexNotificationFromRaw(item.Raw); rawQuote != "" {
+			quoteText = rawQuote
+		}
+	}
+	return quoteText
 }
 
 func plainTextReply(items []messageItem) string {
@@ -106,13 +141,7 @@ func plainTextReply(items []messageItem) string {
 
 func quotedMessageReference(items []messageItem) (messageID string, createTimeMs int64, ok bool) {
 	for _, item := range items {
-		if item.Type != messageItemText || item.TextItem == nil {
-			continue
-		}
-		ref := item.RefMsg
-		if ref == nil {
-			ref = item.TextItem.RefMsg
-		}
+		ref := itemReference(&item)
 		if ref == nil || ref.MessageItem == nil {
 			continue
 		}

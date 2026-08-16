@@ -109,6 +109,30 @@ func TestQuotedTextReply_CodexNotification(t *testing.T) {
 	}
 }
 
+func TestQuotedVoiceReply_CodexNotification(t *testing.T) {
+	notification := "【科研】\n这是最终答复……\n\n" + codexQuoteFooter
+	ref := &refMessage{MessageItem: &messageItem{
+		Type:     messageItemText,
+		TextItem: &textItem{Text: notification},
+	}}
+	items := []messageItem{{
+		Type:      messageItemVoice,
+		VoiceItem: &voiceItem{Text: "继续分析第二种方案"},
+		RefMsg:    ref,
+	}}
+	quote, reply, ok := quotedVoiceReply(items)
+	if !ok || quote != notification || reply != "继续分析第二种方案" {
+		t.Fatalf("quote=%q reply=%q ok=%v", quote, reply, ok)
+	}
+
+	items[0].RefMsg = nil
+	items[0].VoiceItem.RefMsg = ref
+	quote, reply, ok = quotedVoiceReply(items)
+	if !ok || quote != notification || reply != "继续分析第二种方案" {
+		t.Fatalf("nested quote=%q reply=%q ok=%v", quote, reply, ok)
+	}
+}
+
 func TestValidateQuoteRouterURL_LoopbackOnly(t *testing.T) {
 	got, err := validateQuoteRouterURL("http://127.0.0.1:18765")
 	if err != nil || got != "http://127.0.0.1:18765/route" {
@@ -280,6 +304,78 @@ func TestDispatchInbound_IDOnlyQuoteRoutesToCodex(t *testing.T) {
 	}
 	if got.ReferencedMessageID != "7494615923961113736" || got.ReferencedCreateTimeMs != 1786855680000 || got.ReplyText != "继续" {
 		t.Fatalf("request=%+v", got)
+	}
+}
+
+func TestDispatchInbound_QuotedVoiceRoutesRecognitionToCodex(t *testing.T) {
+	var got quoteRouteRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"handled":true,"message":""}`))
+	}))
+	defer server.Close()
+	p := &Platform{
+		quoteRouterURL:    server.URL + "/route",
+		quoteRouterClient: newQuoteRouterHTTPClient(),
+		dedup:             make(map[string]time.Time),
+	}
+	notification := "【日常】\n答案\n\n" + codexQuoteFooter
+	called := false
+	p.dispatchInbound(context.Background(), &weixinMessage{
+		MessageID:  46,
+		FromUserID: "user-1",
+		ItemList: []messageItem{{
+			Type:      messageItemVoice,
+			VoiceItem: &voiceItem{Text: "继续这个对话"},
+			RefMsg: &refMessage{MessageItem: &messageItem{
+				Type:     messageItemText,
+				TextItem: &textItem{Text: notification},
+			}},
+		}},
+	}, func(core.Platform, *core.Message) {
+		called = true
+	})
+	if called {
+		t.Fatal("quoted voice must not reach cc-connect's normal agent")
+	}
+	if got.QuoteText != notification || got.ReplyText != "继续这个对话" {
+		t.Fatalf("request=%+v", got)
+	}
+}
+
+func TestDispatchInbound_QuotedVoiceWithoutRecognitionDoesNotFallThrough(t *testing.T) {
+	var routeCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		routeCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"handled":true,"message":""}`))
+	}))
+	defer server.Close()
+	p := &Platform{
+		quoteRouterURL:    server.URL + "/route",
+		quoteRouterClient: newQuoteRouterHTTPClient(),
+		dedup:             make(map[string]time.Time),
+	}
+	called := false
+	p.dispatchInbound(context.Background(), &weixinMessage{
+		MessageID:  47,
+		FromUserID: "user-1",
+		ItemList: []messageItem{{
+			Type:      messageItemVoice,
+			VoiceItem: &voiceItem{},
+			RefMsg: &refMessage{MessageItem: &messageItem{
+				Type:     messageItemText,
+				TextItem: &textItem{Text: "【日常】\n答案\n\n" + codexQuoteFooter},
+			}},
+		}},
+	}, func(core.Platform, *core.Message) {
+		called = true
+	})
+	if called || routeCalls.Load() != 0 {
+		t.Fatalf("called=%v routeCalls=%d", called, routeCalls.Load())
 	}
 }
 

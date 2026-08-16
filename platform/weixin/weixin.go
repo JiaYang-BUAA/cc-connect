@@ -516,13 +516,25 @@ func (p *Platform) dispatchInbound(ctx context.Context, m *weixinMessage, h core
 	}
 	plainReply := plainTextReply(m.ItemList)
 	quoteText, replyText, textQuotedReply := quotedTextReply(m.ItemList)
+	voiceQuoteText, voiceReplyText, voiceQuotedReply := quotedVoiceReply(m.ItemList)
+	if !textQuotedReply && voiceQuotedReply {
+		quoteText = voiceQuoteText
+		replyText = voiceReplyText
+	}
 	if replyText == "" {
 		replyText = plainReply
 	}
 	referencedMessageID, referencedCreateTimeMs, referencedReply := quotedMessageReference(m.ItemList)
-	quotedReply := textQuotedReply || (referencedReply && replyText != "")
+	if voiceQuotedReply && replyText == "" && (isCodexQuoteCandidate(quoteText) || referencedReply) {
+		response := "未能识别这条语音，请引用原消息后改用文字回复。"
+		if sendErr := p.sendChunks(ctx, rc, response); sendErr != nil {
+			slog.Warn("weixin: quoted voice recognition response send failed", "error", sendErr)
+		}
+		return
+	}
+	quotedReply := textQuotedReply || voiceQuotedReply || (referencedReply && replyText != "")
 	if quotedReply {
-		slog.Info("weixin: detected quoted text reply", "msg_id", msgID, "codex_notification", isCodexNotificationQuote(quoteText), "title_candidate", hasCodexChatTitle(quoteText), "referenced_msg_id", referencedMessageID, "referenced_create_time_ms", referencedCreateTimeMs)
+		slog.Info("weixin: detected quoted reply", "msg_id", msgID, "voice", voiceQuotedReply, "codex_notification", isCodexNotificationQuote(quoteText), "title_candidate", hasCodexChatTitle(quoteText), "referenced_msg_id", referencedMessageID, "referenced_create_time_ms", referencedCreateTimeMs)
 	}
 	if quotedReply && (isCodexQuoteCandidate(quoteText) || referencedReply) {
 		handled, response, err := p.routeQuotedReply(ctx, quoteText, replyText, msgID, from, referencedMessageID, referencedCreateTimeMs)
