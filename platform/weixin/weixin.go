@@ -573,12 +573,14 @@ func (p *Platform) dispatchInbound(ctx context.Context, m *weixinMessage, h core
 			"如果任务正在处理，普通消息会自动排队。需要立即补充要求时，在内容前加 /y，例如：/y 先停止原方案，改用第二种方法。\n" +
 			"如果消息已经排队，可引用排队提示并只回复 /y，将那条消息改为直接提交。\n\n" +
 			"5. 开关答复通知\n" +
-			"发送 /rwpush，可关闭或重新开启置顶任务的最终答复推送。\n\n" +
+			"发送 /rwpush，可关闭或重新开启全部置顶任务的最终答复推送。\n" +
+			"发送 /rwfolder，可单独开关置顶文件夹内对话的最终答复推送。开启后，文件夹里的对话不需要逐个置顶；收到通知后仍可引用回复到原对话。\n\n" +
 			"常用命令\n" +
 			"/rw 查看置顶任务\n" +
 			"/rw3 内容 发给第 3 个任务\n" +
 			"/rw3 /y 内容 直接提交给第 3 个任务\n" +
 			"/rwpush 开关答复推送\n" +
+			"/rwfolder 开关置顶文件夹答复推送\n" +
 			"/hp 查看本指南"
 		if sendErr := p.sendChunks(ctx, rc, response); sendErr != nil {
 			slog.Warn("weixin: usage help response send failed", "error", sendErr)
@@ -601,6 +603,22 @@ func (p *Platform) dispatchInbound(ctx context.Context, m *weixinMessage, h core
 		}
 		// /rw belongs to the local Codex task router and must not be affected
 		// by cc-connect's own slash-command or agent routing behavior.
+		return
+	}
+	if strings.EqualFold(trimmedBody, "/rwfolder") {
+		handled, response, err := p.routePinnedFolderPushToggle(ctx, msgID, from)
+		if err != nil {
+			slog.Warn("weixin: Codex pinned folder push toggle route failed", "error", err)
+			response = "本机 Codex 置顶文件夹任务回复推送路由暂时不可用，请稍后重试。"
+		}
+		if response != "" {
+			if sendErr := p.sendChunks(ctx, rc, response); sendErr != nil {
+				slog.Warn("weixin: Codex pinned folder push toggle response send failed", "error", sendErr)
+			}
+		}
+		if handled {
+			slog.Info("weixin: toggled pinned Codex folder reply push", "msg_id", msgID)
+		}
 		return
 	}
 	if pinnedIndex, reply, matched, valid := parsePinnedTaskCommand(trimmedBody); matched {
@@ -669,7 +687,8 @@ func parsePinnedTaskCommand(body string) (int, string, bool, bool) {
 	if strings.EqualFold(command, "/rw") {
 		return 0, "", true, false
 	}
-	if len(command) < 4 || !strings.EqualFold(command[:3], "/rw") || strings.EqualFold(command, "/rwpush") {
+	if len(command) < 4 || !strings.EqualFold(command[:3], "/rw") ||
+		strings.EqualFold(command, "/rwpush") || strings.EqualFold(command, "/rwfolder") {
 		return 0, "", false, false
 	}
 	if len(fields) < 2 {

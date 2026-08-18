@@ -147,6 +147,25 @@ func (p *Platform) routePinnedPushToggle(
 	return p.postQuoteRouter(ctx, u.String(), payload)
 }
 
+func (p *Platform) routePinnedFolderPushToggle(
+	ctx context.Context, messageID, userID string,
+) (bool, string, error) {
+	if p.quoteRouterURL == "" || p.quoteRouterClient == nil {
+		return false, "Codex 置顶文件夹任务回复推送路由尚未启用。", nil
+	}
+	u, err := url.Parse(p.quoteRouterURL)
+	if err != nil {
+		return false, "", err
+	}
+	u.Path = "/folder-toggle"
+	u.RawQuery = ""
+	payload, err := json.Marshal(quoteStatusRequest{MessageID: messageID, UserID: userID})
+	if err != nil {
+		return false, "", err
+	}
+	return p.postQuoteRouter(ctx, u.String(), payload)
+}
+
 func (p *Platform) postQuoteRouter(
 	ctx context.Context, endpoint string, payload []byte,
 ) (bool, string, error) {

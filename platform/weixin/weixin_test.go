@@ -224,6 +224,7 @@ func TestParsePinnedTaskCommand(t *testing.T) {
 		{"/rwx 内容", 0, "", true, false},
 		{"/rw 3 内容", 0, "", true, false},
 		{"/rwpush", 0, "", false, false},
+		{"/rwfolder", 0, "", false, false},
 	}
 	for _, tt := range tests {
 		index, reply, matched, valid := parsePinnedTaskCommand(tt.body)
@@ -278,6 +279,32 @@ func TestRoutePinnedPushToggle_UsesToggleEndpoint(t *testing.T) {
 		t.Fatalf("handled=%v message=%q err=%v", handled, message, err)
 	}
 	if got.MessageID != "m3" || got.UserID != "u3" {
+		t.Fatalf("request=%+v", got)
+	}
+}
+
+func TestRoutePinnedFolderPushToggle_UsesFolderToggleEndpoint(t *testing.T) {
+	var got quoteStatusRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/folder-toggle" {
+			t.Fatalf("path=%q want /folder-toggle", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"handled":true,"message":"置顶文件夹任务回复推送已开启"}`))
+	}))
+	defer server.Close()
+	p := &Platform{
+		quoteRouterURL:    server.URL + "/route",
+		quoteRouterClient: newQuoteRouterHTTPClient(),
+	}
+	handled, message, err := p.routePinnedFolderPushToggle(context.Background(), "m4", "u4")
+	if err != nil || !handled || message != "置顶文件夹任务回复推送已开启" {
+		t.Fatalf("handled=%v message=%q err=%v", handled, message, err)
+	}
+	if got.MessageID != "m4" || got.UserID != "u4" {
 		t.Fatalf("request=%+v", got)
 	}
 }
@@ -518,6 +545,38 @@ func TestDispatchInbound_PushToggleDoesNotReachNormalAgent(t *testing.T) {
 	})
 	if called || calls.Load() != 1 {
 		t.Fatalf("called=%v toggleCalls=%d", called, calls.Load())
+	}
+}
+
+func TestDispatchInbound_FolderPushToggleDoesNotReachNormalAgent(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Path != "/folder-toggle" {
+			t.Fatalf("path=%q want /folder-toggle", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"handled":true,"message":""}`))
+	}))
+	defer server.Close()
+	p := &Platform{
+		quoteRouterURL:    server.URL + "/route",
+		quoteRouterClient: newQuoteRouterHTTPClient(),
+		dedup:             make(map[string]time.Time),
+	}
+	called := false
+	p.dispatchInbound(context.Background(), &weixinMessage{
+		MessageID:  45,
+		FromUserID: "user-1",
+		ItemList: []messageItem{{
+			Type:     messageItemText,
+			TextItem: &textItem{Text: "/rwfolder"},
+		}},
+	}, func(core.Platform, *core.Message) {
+		called = true
+	})
+	if called || calls.Load() != 1 {
+		t.Fatalf("called=%v folderToggleCalls=%d", called, calls.Load())
 	}
 }
 
