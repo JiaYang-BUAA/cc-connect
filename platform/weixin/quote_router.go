@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/chenhg5/cc-connect/core"
 )
 
 const maxQuoteRouterResponse = 16 << 10
@@ -30,6 +32,12 @@ type quoteRouteResponse struct {
 }
 
 type quoteStatusRequest struct {
+	MessageID string `json:"message_id"`
+	UserID    string `json:"user_id"`
+}
+
+type quoteModeRequest struct {
+	Mode      string `json:"mode"`
 	MessageID string `json:"message_id"`
 	UserID    string `json:"user_id"`
 }
@@ -108,7 +116,7 @@ func (p *Platform) routePinnedTaskReply(
 	ctx context.Context, pinnedIndex int, replyText, messageID, userID string,
 ) (bool, string, error) {
 	if p.quoteRouterURL == "" || p.quoteRouterClient == nil {
-		return false, "Codex 置顶任务路由尚未启用。", nil
+		return false, core.NewI18n(core.LangChinese).T(core.MsgDesktopTaskRouterDisabled), nil
 	}
 	u, err := url.Parse(p.quoteRouterURL)
 	if err != nil {
@@ -132,7 +140,7 @@ func (p *Platform) routePinnedPushToggle(
 	ctx context.Context, messageID, userID string,
 ) (bool, string, error) {
 	if p.quoteRouterURL == "" || p.quoteRouterClient == nil {
-		return false, "Codex 置顶任务回复推送路由尚未启用。", nil
+		return false, core.NewI18n(core.LangChinese).T(core.MsgDesktopTaskRouterDisabled), nil
 	}
 	u, err := url.Parse(p.quoteRouterURL)
 	if err != nil {
@@ -160,6 +168,29 @@ func (p *Platform) routePinnedFolderPushToggle(
 	u.Path = "/folder-toggle"
 	u.RawQuery = ""
 	payload, err := json.Marshal(quoteStatusRequest{MessageID: messageID, UserID: userID})
+	if err != nil {
+		return false, "", err
+	}
+	return p.postQuoteRouter(ctx, u.String(), payload)
+}
+
+func (p *Platform) routeTaskPushMode(
+	ctx context.Context, mode, messageID, userID string,
+) (bool, string, error) {
+	if p.quoteRouterURL == "" || p.quoteRouterClient == nil {
+		return false, core.NewI18n(core.LangChinese).T(core.MsgDesktopTaskRouterDisabled), nil
+	}
+	u, err := url.Parse(p.quoteRouterURL)
+	if err != nil {
+		return false, "", err
+	}
+	u.Path = "/mode"
+	u.RawQuery = ""
+	payload, err := json.Marshal(quoteModeRequest{
+		Mode:      mode,
+		MessageID: messageID,
+		UserID:    userID,
+	})
 	if err != nil {
 		return false, "", err
 	}

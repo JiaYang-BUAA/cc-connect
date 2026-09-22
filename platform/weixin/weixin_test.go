@@ -225,6 +225,8 @@ func TestParsePinnedTaskCommand(t *testing.T) {
 		{"/rw 3 内容", 0, "", true, false},
 		{"/rwpush", 0, "", false, false},
 		{"/rwfolder", 0, "", false, false},
+		{"/rwmode", 0, "", false, false},
+		{"/RWMODE recent", 0, "", false, false},
 	}
 	for _, tt := range tests {
 		index, reply, matched, valid := parsePinnedTaskCommand(tt.body)
@@ -254,6 +256,95 @@ func TestRoutePinnedTaskReply_UsesTaskEndpoint(t *testing.T) {
 	}
 	if got.PinnedIndex != 3 || got.ReplyText != "/y 内容" || got.MessageID != "m4" || got.UserID != "u4" {
 		t.Fatalf("request=%+v", got)
+	}
+}
+
+func TestRouteTaskPushMode_UsesModeEndpoint(t *testing.T) {
+	var got quoteModeRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/mode" || r.Method != http.MethodPost || r.URL.RawQuery != "" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+		}
+		if r.Header.Get("X-Codex-Quote-Token") != "test-token" {
+			t.Error("missing router authentication")
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Error(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"handled":true,"message":"mode changed"}`))
+	}))
+	defer server.Close()
+	p := &Platform{
+		quoteRouterURL: server.URL + "/route?ignored=1", quoteRouterToken: "test-token",
+		quoteRouterClient: newQuoteRouterHTTPClient(),
+	}
+	handled, message, err := p.routeTaskPushMode(context.Background(), "recent", "m-mode", "u-mode")
+	if err != nil || !handled || message != "mode changed" {
+		t.Fatalf("handled=%v message=%q err=%v", handled, message, err)
+	}
+	if got.Mode != "recent" || got.MessageID != "m-mode" || got.UserID != "u-mode" {
+		t.Fatalf("request=%+v", got)
+	}
+}
+
+func TestDispatchInbound_TaskPushModeNeverFallsThroughToAgent(t *testing.T) {
+	for _, tt := range []struct {
+		body string
+		mode string
+	}{
+		{"/rwmode", ""},
+		{"/rwmode pinned", "pinned"},
+		{"  /RWMODE\u3000ReCeNt  ", "recent"},
+		{"/rwmode invalid", "invalid"},
+		{"/rwmode recent pinned", "recent pinned"},
+	} {
+		t.Run(tt.body, func(t *testing.T) {
+			var got quoteModeRequest
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if r.URL.Path != "/mode" {
+					t.Errorf("path=%q want /mode", r.URL.Path)
+				}
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Error(err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				// Even an unhandled response must not send this command to the agent.
+				_, _ = w.Write([]byte(`{"handled":false,"message":""}`))
+			}))
+			defer server.Close()
+			p := &Platform{
+				quoteRouterURL: server.URL + "/route", quoteRouterClient: newQuoteRouterHTTPClient(),
+				dedup: make(map[string]time.Time),
+			}
+			called := false
+			p.dispatchInbound(context.Background(), &weixinMessage{
+				MessageID: 49, FromUserID: "mode-user",
+				ItemList: []messageItem{{Type: messageItemText, TextItem: &textItem{Text: tt.body}}},
+			}, func(core.Platform, *core.Message) { called = true })
+			if called || calls.Load() != 1 || got.Mode != tt.mode || got.MessageID != "49" || got.UserID != "mode-user" {
+				t.Fatalf("agentCalled=%v modeCalls=%d request=%+v", called, calls.Load(), got)
+			}
+		})
+	}
+}
+
+func TestDispatchInbound_TaskPushModeUnavailableDoesNotReachAgent(t *testing.T) {
+	for _, endpoint := range []string{"", ":invalid-url"} {
+		p := &Platform{
+			quoteRouterURL: endpoint, quoteRouterClient: newQuoteRouterHTTPClient(),
+			dedup: make(map[string]time.Time),
+		}
+		called := false
+		p.dispatchInbound(context.Background(), &weixinMessage{
+			MessageID: 50, FromUserID: "mode-user",
+			ItemList: []messageItem{{Type: messageItemText, TextItem: &textItem{Text: "/rwmode recent"}}},
+		}, func(core.Platform, *core.Message) { called = true })
+		if called {
+			t.Fatalf("mode command reached agent with endpoint %q", endpoint)
+		}
 	}
 }
 

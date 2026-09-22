@@ -159,6 +159,10 @@ func (i *I18n) SetLang(lang Language) {
 type MsgKey string
 
 const (
+	MsgDesktopTaskGuide             MsgKey = "desktop_task_guide"
+	MsgDesktopTaskRouterDisabled    MsgKey = "desktop_task_router_disabled"
+	MsgDesktopTaskRouterUnavailable MsgKey = "desktop_task_router_unavailable"
+
 	MsgStarting                  MsgKey = "starting"
 	MsgThinking                  MsgKey = "thinking"
 	MsgTool                      MsgKey = "tool"
@@ -378,31 +382,31 @@ const (
 	MsgCronIDLabel               MsgKey = "cron_id_label"
 	MsgCronFailedSuffix          MsgKey = "cron_failed_suffix"
 
-	MsgTimerNotAvailable  MsgKey = "timer_not_available"
-	MsgTimerUsage         MsgKey = "timer_usage"
-	MsgTimerAddUsage      MsgKey = "timer_add_usage"
-	MsgTimerAdded         MsgKey = "timer_added"
-	MsgTimerAddedExec     MsgKey = "timer_added_exec"
-	MsgTimerAddExecUsage  MsgKey = "timer_addexec_usage"
-	MsgTimerEmpty         MsgKey = "timer_empty"
-	MsgTimerListTitle     MsgKey = "timer_list_title"
-	MsgTimerListFooter    MsgKey = "timer_list_footer"
-	MsgTimerDelUsage      MsgKey = "timer_del_usage"
-	MsgTimerMuteUsage     MsgKey = "timer_mute_usage"
-	MsgTimerDeleted       MsgKey = "timer_deleted"
-	MsgTimerNotFound      MsgKey = "timer_not_found"
-	MsgTimerMuted         MsgKey = "timer_muted"
-	MsgTimerUnmuted       MsgKey = "timer_unmuted"
-	MsgTimerCardHint      MsgKey = "timer_card_hint"
-	MsgTimerBtnMute       MsgKey = "timer_btn_mute"
-	MsgTimerBtnUnmute     MsgKey = "timer_btn_unmute"
-	MsgTimerBtnDelete     MsgKey = "timer_btn_delete"
-	MsgTimerIDLabel       MsgKey = "timer_id_label"
-	MsgTimerScheduledLabel MsgKey = "timer_scheduled_label"
-	MsgTimerFailedSuffix  MsgKey = "timer_failed_suffix"
-	MsgCommandsTagAgent          MsgKey = "commands_tag_agent"
-	MsgCommandsTagShell          MsgKey = "commands_tag_shell"
-	MsgUpgradeTimeoutSuffix      MsgKey = "upgrade_timeout_suffix"
+	MsgTimerNotAvailable    MsgKey = "timer_not_available"
+	MsgTimerUsage           MsgKey = "timer_usage"
+	MsgTimerAddUsage        MsgKey = "timer_add_usage"
+	MsgTimerAdded           MsgKey = "timer_added"
+	MsgTimerAddedExec       MsgKey = "timer_added_exec"
+	MsgTimerAddExecUsage    MsgKey = "timer_addexec_usage"
+	MsgTimerEmpty           MsgKey = "timer_empty"
+	MsgTimerListTitle       MsgKey = "timer_list_title"
+	MsgTimerListFooter      MsgKey = "timer_list_footer"
+	MsgTimerDelUsage        MsgKey = "timer_del_usage"
+	MsgTimerMuteUsage       MsgKey = "timer_mute_usage"
+	MsgTimerDeleted         MsgKey = "timer_deleted"
+	MsgTimerNotFound        MsgKey = "timer_not_found"
+	MsgTimerMuted           MsgKey = "timer_muted"
+	MsgTimerUnmuted         MsgKey = "timer_unmuted"
+	MsgTimerCardHint        MsgKey = "timer_card_hint"
+	MsgTimerBtnMute         MsgKey = "timer_btn_mute"
+	MsgTimerBtnUnmute       MsgKey = "timer_btn_unmute"
+	MsgTimerBtnDelete       MsgKey = "timer_btn_delete"
+	MsgTimerIDLabel         MsgKey = "timer_id_label"
+	MsgTimerScheduledLabel  MsgKey = "timer_scheduled_label"
+	MsgTimerFailedSuffix    MsgKey = "timer_failed_suffix"
+	MsgCommandsTagAgent     MsgKey = "commands_tag_agent"
+	MsgCommandsTagShell     MsgKey = "commands_tag_shell"
+	MsgUpgradeTimeoutSuffix MsgKey = "upgrade_timeout_suffix"
 
 	MsgCronScheduleLabel MsgKey = "cron_schedule_label"
 	MsgCronNextRunLabel  MsgKey = "cron_next_run_label"
@@ -649,6 +653,62 @@ const (
 )
 
 var messages = map[MsgKey]map[Language]string{
+	MsgDesktopTaskRouterDisabled: {
+		LangEnglish:            "The Codex task router is not enabled.",
+		LangChinese:            "Codex 任务路由尚未启用。",
+		LangTraditionalChinese: "Codex 任務路由尚未啟用。",
+		LangJapanese:           "Codex タスクルーターは有効になっていません。",
+		LangSpanish:            "El enrutador de tareas de Codex no está habilitado.",
+	},
+	MsgDesktopTaskRouterUnavailable: {
+		LangEnglish:            "The local Codex task router is temporarily unavailable. Please try again later.",
+		LangChinese:            "本机 Codex 任务路由暂时不可用，请稍后重试。",
+		LangTraditionalChinese: "本機 Codex 任務路由暫時無法使用，請稍後重試。",
+		LangJapanese:           "ローカルの Codex タスクルーターを一時的に利用できません。後でもう一度お試しください。",
+		LangSpanish:            "El enrutador local de tareas de Codex no está disponible temporalmente. Inténtelo más tarde.",
+	},
+	MsgDesktopTaskGuide: {
+		LangChinese: "Codex 微信使用指南\n\n" +
+			"1. 查看可以操作的对话\n发送 /rw，查看当前任务列表的编号、状态和额度。空闲表示当前未运行，运行中会显示已处理时间。\n\n" +
+			"2. 选择推送模式\n发送 /rwmode，在置顶任务和近 10 条活跃任务两种模式间切换。\n/rwmode pinned：推送置顶任务的最终答复。\n/rwmode recent：推送最近有对话活动且未归档的 10 个任务的最终答复，包括当前空闲的任务。\n\n" +
+			"3. 向指定对话发送消息\n格式：/rw编号 内容\n例如：/rw3 继续完善刚才的方案\n表示把消息发给当前任务列表中的第 3 个任务。编号可能随模式、置顶顺序或最近活动变化，发送前请用 /rw 确认。\n\n" +
+			"4. 回复收到的 Codex 答复\n在微信中引用整条 Codex 答复，再输入你的新要求并发送，消息会回到对应的 Codex 对话。\n\n" +
+			"5. 排队和直接提交\n如果任务正在处理，普通消息会自动排队。需要立即补充要求时，在内容前加 /y，例如：/rw3 /y 先停止原方案，改用第二种方法。\n如果消息已经排队，可引用排队提示并只回复 /y，将那条消息改为直接提交。\n\n" +
+			"6. 开关答复通知\n/rwpush 是两种模式共用的推送总开关，可关闭或重新开启最终答复推送。\n/rwfolder 仅在置顶模式下生效，用来开关置顶文件夹内任务的答复推送；文件夹内任务不需要逐个置顶。\n\n" +
+			"常用命令\n/rw 查看当前任务列表\n/rwmode 切换推送模式\n/rw3 内容 发给第 3 个任务\n/rw3 /y 内容 直接提交给第 3 个任务\n/rwpush 开关全部答复推送\n/rwfolder 开关置顶文件夹答复推送\n/hp 查看本指南",
+		LangEnglish: "Codex messaging guide\n\n" +
+			"1. View available conversations\nSend /rw to view numbers, status and quota for the current task list. Idle means the task is not running; running tasks show elapsed time.\n\n" +
+			"2. Choose a notification mode\nSend /rwmode to switch between pinned tasks and the 10 most recently active tasks.\n/rwmode pinned: notify when pinned tasks finish.\n/rwmode recent: notify for the 10 unarchived tasks with the most recent conversation activity, including tasks that are currently idle.\n\n" +
+			"3. Send a message to a task\nFormat: /rwNUMBER message\nExample: /rw3 Continue improving the proposal\nThis sends to task 3 in the current task list. Numbers may change with the mode, pin order or recent activity. Check /rw before sending.\n\n" +
+			"4. Reply to a Codex answer\nQuote the complete Codex answer and send your new request. It will return to the corresponding conversation.\n\n" +
+			"5. Queue or submit directly\nOrdinary messages are queued when the task is running. Add /y before the content to submit directly, for example: /rw3 /y Use the second approach first.\nTo submit an already queued message directly, quote its queue receipt and reply with only /y.\n\n" +
+			"6. Toggle notifications\n/rwpush is the shared master switch for final-answer notifications in both modes.\n/rwfolder applies only in pinned mode and toggles notifications for tasks inside pinned folders, without pinning each task individually.\n\n" +
+			"Commands\n/rw Current task list\n/rwmode Switch notification mode\n/rw3 message Send to task 3\n/rw3 /y message Submit directly to task 3\n/rwpush Toggle all answer notifications\n/rwfolder Toggle pinned-folder notifications\n/hp This guide",
+		LangTraditionalChinese: "Codex 微信使用指南\n\n" +
+			"1. 查看可以操作的對話\n傳送 /rw，查看目前任務清單的編號、狀態和額度。閒置表示目前未執行，執行中會顯示已處理時間。\n\n" +
+			"2. 選擇推送模式\n傳送 /rwmode，在置頂任務和最近 10 個活躍任務之間切換。\n/rwmode pinned：推送置頂任務的最終答覆。\n/rwmode recent：推送最近有對話活動且未封存的 10 個任務的最終答覆，包括目前閒置的任務。\n\n" +
+			"3. 向指定對話傳送訊息\n格式：/rw編號 內容\n例如：/rw3 繼續完善剛才的方案\n表示傳給目前任務清單中的第 3 個任務。編號可能隨模式、置頂順序或最近活動變動，傳送前請用 /rw 確認。\n\n" +
+			"4. 回覆收到的 Codex 答覆\n在微信中引用整則 Codex 答覆，再輸入新要求並傳送，訊息會回到對應的 Codex 對話。\n\n" +
+			"5. 排隊與直接提交\n任務執行中時，一般訊息會自動排隊。在內容前加 /y 可直接提交，例如：/rw3 /y 先改用第二種方法。\n若訊息已排隊，可引用排隊提示並只回覆 /y，將該訊息改為直接提交。\n\n" +
+			"6. 開關答覆通知\n/rwpush 是兩種模式共用的推送總開關。\n/rwfolder 僅在置頂模式下生效，用來開關置頂資料夾內任務的答覆推送，無須逐個置頂任務。\n\n" +
+			"常用命令\n/rw 查看目前任務清單\n/rwmode 切換推送模式\n/rw3 內容 傳給第 3 個任務\n/rw3 /y 內容 直接提交給第 3 個任務\n/rwpush 開關全部答覆推送\n/rwfolder 開關置頂資料夾答覆推送\n/hp 查看本指南",
+		LangJapanese: "Codex メッセージ利用ガイド\n\n" +
+			"1. タスクを確認\n/rw で現在のタスクリストの番号、状態、使用枠を確認できます。アイドルは実行していない状態、実行中は経過時間を表示します。\n\n" +
+			"2. 通知モードを選択\n/rwmode でピン留めタスクと最近アクティブな 10 件を切り替えます。\n/rwmode pinned：ピン留めタスクの最終回答を通知します。\n/rwmode recent：会話の更新が新しい、アーカイブされていない 10 件の最終回答を通知します。現在アイドルのタスクも含みます。\n\n" +
+			"3. タスクに送信\n書式：/rw番号 内容\n例：/rw3 提案の改善を続けて\n現在のリストの 3 番に送信します。番号はモード、ピン留め順、最近の活動で変わるため、送信前に /rw で確認してください。\n\n" +
+			"4. 回答に返信\nCodex の回答全体を引用し、新しい要求を送信すると、対応する会話に戻ります。\n\n" +
+			"5. キューと直接送信\n実行中のタスクへの通常メッセージはキューに入ります。内容の前に /y を付けると直接送信できます。例：/rw3 /y 先に二つ目の方法を使って\nキュー通知を引用して /y だけ返信すると、そのメッセージを直接送信できます。\n\n" +
+			"6. 通知のオン・オフ\n/rwpush は両モード共通の最終回答通知スイッチです。\n/rwfolder はピン留めモードのみで有効です。ピン留めフォルダー内のタスクを個別にピン留めせず通知できます。\n\n" +
+			"コマンド\n/rw 現在のタスクリスト\n/rwmode 通知モードを切り替え\n/rw3 内容 3 番へ送信\n/rw3 /y 内容 3 番へ直接送信\n/rwpush 全回答通知を切り替え\n/rwfolder ピン留めフォルダー通知を切り替え\n/hp このガイド",
+		LangSpanish: "Guía de mensajes de Codex\n\n" +
+			"1. Ver conversaciones\nEnvíe /rw para ver números, estado y cuota de la lista actual de tareas. Inactiva significa que no se está ejecutando; las tareas en ejecución muestran el tiempo transcurrido.\n\n" +
+			"2. Elegir modo de notificaciones\n/rwmode alterna entre tareas fijadas y las 10 tareas con actividad más reciente.\n/rwmode pinned: notifica las respuestas finales de tareas fijadas.\n/rwmode recent: notifica las respuestas finales de las 10 tareas no archivadas con actividad de conversación más reciente, incluidas las actualmente inactivas.\n\n" +
+			"3. Enviar a una tarea\nFormato: /rwNÚMERO mensaje\nEjemplo: /rw3 Continúa mejorando la propuesta\nEnvía a la tarea 3 de la lista actual. Los números pueden cambiar con el modo, el orden de fijación o la actividad reciente. Consulte /rw antes de enviar.\n\n" +
+			"4. Responder a Codex\nCite la respuesta completa de Codex y envíe su nueva petición para volver a la conversación correspondiente.\n\n" +
+			"5. Cola o envío directo\nLos mensajes normales se ponen en cola si la tarea está ejecutándose. Añada /y antes del contenido para enviarlo directamente, por ejemplo: /rw3 /y Usa primero el segundo enfoque.\nPara enviar directamente un mensaje ya en cola, cite su confirmación y responda solo /y.\n\n" +
+			"6. Activar o desactivar notificaciones\n/rwpush es el interruptor general compartido de respuestas finales para ambos modos.\n/rwfolder solo se aplica al modo de tareas fijadas y controla las notificaciones de tareas en carpetas fijadas, sin fijar cada tarea por separado.\n\n" +
+			"Comandos\n/rw Lista actual de tareas\n/rwmode Cambiar modo de notificaciones\n/rw3 mensaje Enviar a la tarea 3\n/rw3 /y mensaje Enviar directamente a la tarea 3\n/rwpush Alternar todas las notificaciones de respuestas\n/rwfolder Alternar notificaciones de carpetas fijadas\n/hp Esta guía",
+	},
 	MsgStarting: {
 		LangEnglish:            "⏳ Processing...",
 		LangChinese:            "⏳ 处理中...",

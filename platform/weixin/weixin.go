@@ -560,31 +560,27 @@ func (p *Platform) dispatchInbound(ctx context.Context, m *weixinMessage, h core
 	body := bodyFromItemList(m.ItemList)
 	trimmedBody := strings.TrimSpace(body)
 	if strings.EqualFold(trimmedBody, "/hp") {
-		response := "Codex 微信使用指南\n\n" +
-			"1. 查看可以操作的对话\n" +
-			"发送 /rw，查看 Codex 中所有置顶对话的编号和状态。空闲表示可以立即处理，运行中会显示已处理时间。\n\n" +
-			"2. 向指定对话发送消息\n" +
-			"格式：/rw编号 内容\n" +
-			"例如：/rw3 继续完善刚才的方案\n" +
-			"表示把消息发给列表中的第 3 个置顶对话。编号可能随置顶顺序变化，发送前可用 /rw 确认。\n\n" +
-			"3. 回复收到的 Codex 答复\n" +
-			"在微信中引用整条 Codex 答复，再输入你的新要求并发送，消息会回到对应的 Codex 对话。\n\n" +
-			"4. 排队和直接提交\n" +
-			"如果任务正在处理，普通消息会自动排队。需要立即补充要求时，在内容前加 /y，例如：/y 先停止原方案，改用第二种方法。\n" +
-			"如果消息已经排队，可引用排队提示并只回复 /y，将那条消息改为直接提交。\n\n" +
-			"5. 开关答复通知\n" +
-			"发送 /rwpush，可关闭或重新开启全部置顶任务的最终答复推送。\n" +
-			"发送 /rwfolder，可单独开关置顶文件夹内对话的最终答复推送。开启后，文件夹里的对话不需要逐个置顶；收到通知后仍可引用回复到原对话。\n\n" +
-			"常用命令\n" +
-			"/rw 查看置顶任务\n" +
-			"/rw3 内容 发给第 3 个任务\n" +
-			"/rw3 /y 内容 直接提交给第 3 个任务\n" +
-			"/rwpush 开关答复推送\n" +
-			"/rwfolder 开关置顶文件夹答复推送\n" +
-			"/hp 查看本指南"
+		response := core.NewI18n(core.LangChinese).T(core.MsgDesktopTaskGuide)
 		if sendErr := p.sendChunks(ctx, rc, response); sendErr != nil {
 			slog.Warn("weixin: usage help response send failed", "error", sendErr)
 		}
+		return
+	}
+	if mode, matched := parseTaskPushModeCommand(trimmedBody); matched {
+		handled, response, err := p.routeTaskPushMode(ctx, mode, msgID, from)
+		if err != nil {
+			slog.Warn("weixin: Codex task push mode route failed", "error", err)
+			response = core.NewI18n(core.LangChinese).T(core.MsgDesktopTaskRouterUnavailable)
+		}
+		if response != "" {
+			if sendErr := p.sendChunks(ctx, rc, response); sendErr != nil {
+				slog.Warn("weixin: Codex task push mode response send failed", "error", sendErr)
+			}
+		}
+		if handled {
+			slog.Info("weixin: changed Codex task push mode", "msg_id", msgID)
+		}
+		// Invalid arguments also belong to the local router, which returns usage.
 		return
 	}
 	if strings.EqualFold(trimmedBody, "/rw") {
@@ -628,7 +624,7 @@ func (p *Platform) dispatchInbound(ctx context.Context, m *weixinMessage, h core
 			_, response, err = p.routePinnedTaskReply(ctx, pinnedIndex, reply, msgID, from)
 			if err != nil {
 				slog.Warn("weixin: Codex pinned task route failed", "error", err)
-				response = "本机 Codex 置顶任务路由暂时不可用，请稍后重试。"
+				response = core.NewI18n(core.LangChinese).T(core.MsgDesktopTaskRouterUnavailable)
 			}
 		}
 		if response != "" {
@@ -642,7 +638,7 @@ func (p *Platform) dispatchInbound(ctx context.Context, m *weixinMessage, h core
 		handled, response, err := p.routePinnedPushToggle(ctx, msgID, from)
 		if err != nil {
 			slog.Warn("weixin: Codex pinned push toggle route failed", "error", err)
-			response = "本机 Codex 置顶任务回复推送路由暂时不可用，请稍后重试。"
+			response = core.NewI18n(core.LangChinese).T(core.MsgDesktopTaskRouterUnavailable)
 		}
 		if response != "" {
 			if sendErr := p.sendChunks(ctx, rc, response); sendErr != nil {
@@ -678,6 +674,15 @@ func (p *Platform) dispatchInbound(ctx context.Context, m *weixinMessage, h core
 	})
 }
 
+func parseTaskPushModeCommand(body string) (string, bool) {
+	fields := strings.Fields(body)
+	if len(fields) == 0 || !strings.EqualFold(fields[0], "/rwmode") {
+		return "", false
+	}
+	// Preserve invalid argument combinations for the notifier's usage response.
+	return strings.ToLower(strings.Join(fields[1:], " ")), true
+}
+
 func parsePinnedTaskCommand(body string) (int, string, bool, bool) {
 	fields := strings.Fields(body)
 	if len(fields) == 0 {
@@ -688,7 +693,8 @@ func parsePinnedTaskCommand(body string) (int, string, bool, bool) {
 		return 0, "", true, false
 	}
 	if len(command) < 4 || !strings.EqualFold(command[:3], "/rw") ||
-		strings.EqualFold(command, "/rwpush") || strings.EqualFold(command, "/rwfolder") {
+		strings.EqualFold(command, "/rwpush") || strings.EqualFold(command, "/rwfolder") ||
+		strings.EqualFold(command, "/rwmode") {
 		return 0, "", false, false
 	}
 	if len(fields) < 2 {
